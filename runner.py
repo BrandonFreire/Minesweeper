@@ -12,6 +12,10 @@ MINES = 8
 BLACK = (0, 0, 0)
 GRAY = (180, 180, 180)
 WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
 
 # Create game
 pygame.init()
@@ -45,6 +49,22 @@ ai = MinesweeperAI(height=HEIGHT, width=WIDTH)
 revealed = set()
 flags = set()
 lost = False
+won = False
+
+# Keep track of moves made
+move_history = []
+history_index = -1
+
+ai_active = False
+won = False
+
+# Keep track of moves made by AI
+ai_moves = []
+human_moves = []
+move_history = []
+history_index = -1
+
+ai_active = False
 
 # Show instructions initially
 instructions = True
@@ -130,12 +150,12 @@ while True:
             row.append(rect)
         cells.append(row)
 
-    # AI Move button
+    # AI Agent button
     aiButton = pygame.Rect(
         (2 / 3) * width + BOARD_PADDING, (1 / 3) * height - 50,
         (width / 3) - BOARD_PADDING * 2, 50
     )
-    buttonText = mediumFont.render("AI Move", True, BLACK)
+    buttonText = mediumFont.render("AI Agent", True, BLACK)
     buttonRect = buttonText.get_rect()
     buttonRect.center = aiButton.center
     pygame.draw.rect(screen, WHITE, aiButton)
@@ -153,18 +173,48 @@ while True:
     screen.blit(buttonText, buttonRect)
 
     # Display text
-    text = "Lost" if lost else "Won" if game.mines == flags else ""
-    text = mediumFont.render(text, True, WHITE)
+    text = ""
+    color = WHITE
+    if lost:
+        text = "YOU LOST"
+        color = RED
+    elif won:
+        text = "YOU WON"
+        color = GREEN
+    
+    text = mediumFont.render(text, True, color)
     textRect = text.get_rect()
     textRect.center = ((5 / 6) * width, (2 / 3) * height)
     screen.blit(text, textRect)
 
     move = None
 
+    # Handle events
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            sys.exit()
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_LEFT:
+                if history_index > 0:
+                    history_index -= 1
+                    # Restore state from history
+                    revealed, flags, ai.knowledge = move_history[history_index]
+                    revealed = revealed.copy()
+                    flags = flags.copy()
+                    # This is a simplification, a more robust implementation
+                    # would require deep copying or re-evaluating knowledge
+            elif event.key == pygame.K_RIGHT:
+                if history_index < len(move_history) - 1:
+                    history_index += 1
+                    # Restore state from history
+                    revealed, flags, ai.knowledge = move_history[history_index]
+                    revealed = revealed.copy()
+                    flags = flags.copy()
+
     left, _, right = pygame.mouse.get_pressed()
 
     # Check for a right-click to toggle flagging
-    if right == 1 and not lost:
+    if right == 1 and not lost and not won:
         mouse = pygame.mouse.get_pos()
         for i in range(HEIGHT):
             for j in range(WIDTH):
@@ -178,18 +228,9 @@ while True:
     elif left == 1:
         mouse = pygame.mouse.get_pos()
 
-        # If AI button clicked, make an AI move
-        if aiButton.collidepoint(mouse) and not lost:
-            move = ai.make_safe_move()
-            if move is None:
-                move = ai.make_random_move()
-                if move is None:
-                    flags = ai.mines.copy()
-                    print("No moves left to make.")
-                else:
-                    print("No known safe moves, AI making random move.")
-            else:
-                print("AI making safe move.")
+        # If AI button clicked, activate AI
+        if aiButton.collidepoint(mouse) and not lost and not won:
+            ai_active = not ai_active
             time.sleep(0.2)
 
         # Reset game state
@@ -199,10 +240,14 @@ while True:
             revealed = set()
             flags = set()
             lost = False
+            won = False
+            ai_active = False
+            move_history = []
+            history_index = -1
             continue
 
         # User-made move
-        elif not lost:
+        elif not lost and not won and not ai_active:
             for i in range(HEIGHT):
                 for j in range(WIDTH):
                     if (cells[i][j].collidepoint(mouse)
@@ -210,13 +255,47 @@ while True:
                             and (i, j) not in revealed):
                         move = (i, j)
 
+    # AI makes a move
+    if ai_active and not lost and not won:
+        move = ai.make_safe_move()
+        if move is None:
+            move = ai.make_random_move()
+            if move is None:
+                flags = ai.mines.copy()
+                if game.mines.issubset(flags):
+                     won = True
+                else:
+                    lost = True
+                ai_active = False
+            else:
+                print("No known safe moves, AI making random move.")
+        else:
+            print("AI making safe move.")
+        time.sleep(0.2)
+
+
     # Make move and update AI knowledge
     if move:
-        if game.is_mine(move):
-            lost = True
-        else:
-            nearby = game.nearby_mines(move)
-            revealed.add(move)
-            ai.add_knowledge(move, nearby)
+        if move not in revealed and move not in flags:
+            if game.is_mine(move):
+                lost = True
+                ai_active = False
+            else:
+                nearby = game.nearby_mines(move)
+                revealed.add(move)
+                ai.add_knowledge(move, nearby)
+                
+                # Save state to history
+                current_state = (revealed.copy(), flags.copy(), [s for s in ai.knowledge])
+                if history_index < len(move_history) - 1:
+                    move_history = move_history[:history_index+1]
+                move_history.append(current_state)
+                history_index += 1
+
+    # Check for win condition
+    if not lost:
+        if game.mines.issubset(flags) and len(revealed) == (HEIGHT * WIDTH) - len(game.mines):
+            won = True
+            ai_active = False
 
     pygame.display.flip()
